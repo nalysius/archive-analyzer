@@ -92,6 +92,35 @@ pub struct StoredFile {
     pub file_data: Vec<u8>,
     /// The optional data descriptor
     pub data_descriptor: Option<DataDescriptor>,
+
+    /// The position of the file in the archive (0-based)
+    /// The position is about the order of the files in
+    /// the archive, not the order in the central directory
+    pub position_in_archive: usize,
+    /// The position of the file in the central directory (0-based)
+    /// The position is about the order of the files in the central
+    /// directory, not the order in the archive
+    pub position_in_central_directory: usize,
+    /// Whether this file was present in the central directory.
+    /// If false, that means the file was improperly removed from the archive
+    /// or hidden
+    pub found_in_central_directory: bool,
+    /// Whether this file was present in the archive.
+    /// If false, that means the file was present in the central directory
+    /// but not in the archive.
+    pub found_in_archive: bool,
+    /// The offset in bytes from the beginning of the archive file.
+    /// This value can be used to compare with the value stored in the central
+    /// directory.
+    /// Note: if the file is not present in the archive but is announced in the
+    /// central directory, this value is None.
+    pub offset_in_archive: Option<usize>,
+    /// The offset in bytes as read from the central directory.
+    /// This value can be used to compare with the real position of the file
+    /// in the archive.
+    /// Note: if the file is not announced in the central directory but is
+    /// present in the archive, this value is None.
+    pub offset_from_central_directory: Option<usize>,
 }
 
 /// Represents an Archive Decryption Header
@@ -171,4 +200,12 @@ pub struct CentralDirectory {
     pub file_headers: Vec<CentralDirectoryFileHeader>,
     /// The record for end of central directory
     pub end_of_central_directory_record: EndOfCentralDirectoryRecord,
+}
+
+/// Represents a whole ZIP file
+pub struct ZipFile {
+    /// A list of stored file
+    pub stored_files: Vec<StoredFile>,
+    /// The central directory
+    pub central_directory: CentralDirectory,
 }
