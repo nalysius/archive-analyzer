@@ -96,11 +96,11 @@ pub struct StoredFile {
     /// The position of the file in the archive (0-based)
     /// The position is about the order of the files in
     /// the archive, not the order in the central directory
-    pub position_in_archive: usize,
+    pub position_in_archive: Option<usize>,
     /// The position of the file in the central directory (0-based)
     /// The position is about the order of the files in the central
     /// directory, not the order in the archive
-    pub position_in_central_directory: usize,
+    pub position_in_central_directory: Option<usize>,
     /// Whether this file was present in the central directory.
     /// If false, that means the file was improperly removed from the archive
     /// or hidden
@@ -207,5 +207,8 @@ pub struct ZipFile {
     /// A list of stored file
     pub stored_files: Vec<StoredFile>,
     /// The central directory
-    pub central_directory: CentralDirectory,
+    /// In the specification it's not optional, but in practice
+    /// it could let us reading a ZIP file even if the central directory
+    /// has been removed / damaged
+    pub central_directory: Option<CentralDirectory>,
 }
