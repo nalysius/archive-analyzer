@@ -2,8 +2,8 @@
 
 use crate::errors::ReadNumberFromBytesError;
 use crate::zip::constants;
-use std::fs;
-use std::io::Read;
+use std::fs::{self, File};
+use std::io::{Read, Seek, SeekFrom};
 
 /**
  * Read a chunk of the file.
@@ -27,6 +27,33 @@ pub fn check_signature(chunk: Vec<u8>) -> String {
         return "zip".to_string();
     }
     return signature.to_string();
+}
+
+/// Compare the 4 next bytes of file to the given signature.
+/// This function is a helper to check what the next part of the file is.
+///
+/// This function consumes the signature ONLY if its matches. If the signature
+/// matches, the caller will probably want to read the next part of the file, and
+/// the signature is not useful anymore once it's checked.
+/// However, if the signature doesn't match, the cursor of the file is reset to
+/// its previous position, as if the signature wasn't checked.
+///
+/// Note: in case of error, the file cursor is not reset. Usually not a problem
+/// since the Err is usually returned by the caller in order to stop operations on
+/// the file.
+pub fn compare_signature(file: &mut File, signature: u32) -> Result<bool, String> {
+    let current_offset = file.stream_position()
+        .or(Err("Unable to read the current position in the archive".to_string()))?;
+    let chunk = read_chunk(file, 4);
+    let value = read_u32_le(&chunk)
+        .or(Err("Unable to compare signature".to_string()))?;
+
+    let signature_match = value == signature;
+    if !signature_match {
+        file.seek(SeekFrom::Start(current_offset))
+                    .or(Err("Unable to move cursor in the archive".to_string()))?;
+    }
+    Ok(signature_match)
 }
 
 /// Reads a u32 from little indian bytes
