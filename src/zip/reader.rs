@@ -205,7 +205,7 @@ impl CentralDirectoryFileHeaderReader {
             .or(Err("Unable to read the central directory file header: unreadable uncompressed size".to_string()))?;
         let filename_length = read_u16_le(&filename_length_chunk)
             .or(Err("Unable to read the central directory file header: unreadable filename length".to_string()))?;
-        let extra_field_length = read_u32_le(&extra_field_length_chunk)
+        let extra_field_length = read_u16_le(&extra_field_length_chunk)
             .or(Err("Unable to read the central directory file header: unreadable extra field length".to_string()))?;
         let file_comment_length = read_u16_le(&file_comment_length_chunk)
             .or(Err("Unable to read the central directory file header: unreadable file comment length".to_string()))?;
@@ -332,6 +332,11 @@ impl CentralDirectoryReader {
             central_directory_file_headers.push(header);
         }
 
+        // TODO: as in ZipFileReader, loop over the file byte by byte to
+        // find the next signature.
+        // by doing so, it would be possible to ignore a damaged central directory header
+        // while still being able to read the next one / next part of the file.
+
         // Check if digital signature is present
         let mut digital_signature = None;
         if compare_signature(file, constants::SIGNATURE_CENTRAL_DIRECTORY_DIGITAL_SIGNATURE)
@@ -375,11 +380,18 @@ impl ZipFileReader {
         while compare_signature(file, constants::SIGNATURE_HEADER_LOCAL_FILE)
                 .or::<String>(Ok(false)).unwrap()
         {
+            let current_offset = file.stream_position()
+                .or(Err("Unable to read current position in archive"))?;
             let stored_file = StoredFileReader::read(file, stored_files.len());
 
-            // TODO: handle the case if stored_file is an Err. Log it, at least
             if stored_file.is_ok() {
                 stored_files.push(stored_file.unwrap());
+            } else {
+                // If the stored file cannot be read, reset the file cursor
+                // and continue reading manually
+                let new_current_offset = file.stream_position()
+                    .or(Err("Unable to read current position in archive"))?;
+                rewind_file_cursor(file, new_current_offset - current_offset)?
             }
         }
 
@@ -423,12 +435,24 @@ impl ZipFileReader {
                 archive_extra_data_record = Some(ArchiveExtraDataRecordReader::read(file)?);
             } else if compare_signature_raw(file, &chunk, constants::SIGNATURE_HEADER_CENTRAL_DIRECTORY, false)? {
                 // Did we found the central directory?
-                if let Ok(cd) =  CentralDirectoryReader::read(file){
+                // This struct is repeated for each file, so the CentralDirectoryReader
+                // will loop on each file. For this, it needs to read the signature. Since
+                // we already consumed it because of the usage of compare_signature_raw(),
+                // rewind the file cursor.
+                rewind_file_cursor(file, 4)?;
+                let cd_result = CentralDirectoryReader::read(file);
+                if cd_result.is_ok() {
+                    let cd = cd_result.unwrap();
                     central_directory = Some(cd);
 
                     // Set StoredFile values with the ones found in CentralDirectory
                     for stored_file in &mut stored_files {
                         stored_file.update_from_central_directory(central_directory.as_ref().unwrap());
+                    }
+                } else {
+                    // TODO: use a logger instead of printing to STDOUT
+                    if let Err(e) = cd_result {
+                        println!("ERROR when reading central directory header: {}", e);
                     }
                 }
                 // Central directory is the last part of a ZIP, if we found it

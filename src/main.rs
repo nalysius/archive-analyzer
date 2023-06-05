@@ -20,6 +20,7 @@ fn main() {
     if let Ok(zip_file) = zip_file_result {
         for stored_file in zip_file.stored_files {
             println!("----------{}----------", stored_file.local_file_header.filename);
+            println!("\tPosition in archive: {}", stored_file.position);
             println!("\tMinimum version to extract: {}", stored_file.local_file_header.minimum_version);
             println!("\tGeneral purpose flag: {}", stored_file.local_file_header.general_purpose_flag);
             println!("\tCompression method: {}", stored_file.local_file_header.compression_method);
@@ -30,7 +31,6 @@ fn main() {
             println!("\tUncompressed size: {}", stored_file.local_file_header.uncompressed_size);
             println!("\tFilename: {}", stored_file.local_file_header.filename);
             println!("\tFound in central directory: {}", stored_file.found_in_central_directory);
-            println!("\tPosition in archive: {}", stored_file.position);
             println!("\tOffset from start of archive: {}", stored_file.offset_in_archive);
 
             println!("\n")
@@ -51,6 +51,11 @@ fn main() {
             println!("\tOffset of the central directory, relative to the start of archive: {}", central_directory.end_of_central_directory_record.offset_start_central_directory);
 
             for central_directory_file_headers in central_directory.file_headers {
+                println!("\n");
+                println!("----------{}----------", central_directory_file_headers.filename);
+                if central_directory_file_headers.position.is_some() {
+                    println!("\tPosition in central directory: {}", central_directory_file_headers.position.unwrap());
+                }
                 println!("\tCompressed size: {}", central_directory_file_headers.compressed_size);
                 println!("\tCompression method: {}", central_directory_file_headers.compression_method);
                 println!("\tCRC32: {}", central_directory_file_headers.crc32);
