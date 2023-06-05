@@ -1,6 +1,6 @@
 //! This module contains readers whose goal is to read and parse a ZIP file
 
-use crate::util::{compare_signature, read_chunk, read_string_bytes, read_u16_le, read_u32_le};
+use crate::util::{compare_signature, file_has_remaining_space,read_chunk, read_string_bytes, read_u16_le, read_u32_le, compare_signature_raw, rewind_file_cursor};
 use std::fs::File;
 use std::io::Seek;
 use super::constants;
@@ -383,25 +383,63 @@ impl ZipFileReader {
             }
         }
 
-        // TODO: read the Archive Decryption Header
-
-        // Handle the Archive Extra Data Record
         let mut archive_extra_data_record = None;
-        if compare_signature(file, constants::SIGNATURE_ARCHIVE_EXTRA_DATA_RECORD)? {
-            archive_extra_data_record = Some(ArchiveExtraDataRecordReader::read(file)?);
-        }
-
-        // Handle the Central Directory
-        // In this case it's possible to read a ZIP without a valid
-        // central directory. But if it's present, it's taken
         let mut central_directory = None;
 
-        if let Ok(cd) =  CentralDirectoryReader::read(file){
-            central_directory = Some(cd);
+        /*
+         * We can reach this point in several cases:
+         * 1. At least one of the Local File Headers was unreadable, because the
+         *    file was damaged.
+         * 2. All the Local File Headers have been read, and next there is another
+         *    section (Archive Decryption Header, Archive Extra Data Header, or
+         *    Central Directory).
+         * 3. The end of the file is truncated, and we reached the end.
+         *
+         * To have more chance to read any content from the file, I decided to
+         * ignore any unreadable part and to try to find another readable
+         * section as soon as possible.
+         * That means that once we finished to read the series of Local File
+         * Headers, signatures are checked for Local File Header, Archive Extra
+         * Data Record, and Central Directory.
+         * TODO: add check and reading for Archive Decryption Header
+         * By doing this, as soon as a known section is found somewhere in the
+         * file, reading can continue.
+         *
+         * Note: there is a little chance of false positive. While low, it's
+         * possible to have 4 bytes somewhere whose value matches a signature.
+         * It would break reading of the rest of the file.
+         */
+        loop {
+            let chunk = read_chunk(file, 4);
+            // Did we found another local file header?
+            if compare_signature_raw(file, &chunk, constants::SIGNATURE_HEADER_LOCAL_FILE, false)? {
+                let stored_file = StoredFileReader::read(file, stored_files.len());
+                // TODO: handle the case if stored_file is an Err. Log it, at least
+                if stored_file.is_ok() {
+                    stored_files.push(stored_file.unwrap());
+                }
+            } else if compare_signature_raw(file, &chunk, constants::SIGNATURE_ARCHIVE_EXTRA_DATA_RECORD, false)? {
+                // Did we found the archive extra data record?
+                archive_extra_data_record = Some(ArchiveExtraDataRecordReader::read(file)?);
+            } else if compare_signature_raw(file, &chunk, constants::SIGNATURE_HEADER_CENTRAL_DIRECTORY, false)? {
+                // Did we found the central directory?
+                if let Ok(cd) =  CentralDirectoryReader::read(file){
+                    central_directory = Some(cd);
 
-            // Set StoredFile values with the ones found in CentralDirectory
-            for stored_file in &mut stored_files {
-                stored_file.update_from_central_directory(central_directory.as_ref().unwrap());
+                    // Set StoredFile values with the ones found in CentralDirectory
+                    for stored_file in &mut stored_files {
+                        stored_file.update_from_central_directory(central_directory.as_ref().unwrap());
+                    }
+                }
+                // Central directory is the last part of a ZIP, if we found it
+                // we can exit the loop
+                break;
+            } else if !file_has_remaining_space(file, 4)? {
+                // It seems we reached the end of the file, stop here
+                break;
+            } else {
+                // We didn't find anything. Shift of 1 byte, and try again
+                rewind_file_cursor(file, 3)?;
             }
         }
 
