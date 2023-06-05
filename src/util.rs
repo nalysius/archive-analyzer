@@ -32,28 +32,67 @@ pub fn check_signature(chunk: Vec<u8>) -> String {
 /// Compare the 4 next bytes of file to the given signature.
 /// This function is a helper to check what the next part of the file is.
 ///
+/// The 4 bytes of signature are consumed ONLY if the signature matches.
+/// Otherwise, the cursor is reset to its previous position.
+///
+/// Note: see compare_signature_raw() which does most of the job.
+pub fn compare_signature(file: &mut File, signature: u32) -> Result<bool, String> {
+    let chunk = read_chunk(file, 4);
+    compare_signature_raw(file, &chunk, signature, true)
+}
+
+/// Compare the given 4 bytes to a signature.
+/// This helps to detect the next part of the file.
+///
 /// This function consumes the signature ONLY if its matches. If the signature
 /// matches, the caller will probably want to read the next part of the file, and
 /// the signature is not useful anymore once it's checked.
 /// However, if the signature doesn't match, the cursor of the file is reset to
-/// its previous position, as if the signature wasn't checked.
+/// its previous position, as if the signature wasn't checked, except if
+/// rewind_on_mismatch is set to false. This parameter is mainly useful for
+/// manual signature comparison.
 ///
 /// Note: in case of error, the file cursor is not reset. Usually not a problem
 /// since the Err is usually returned by the caller in order to stop operations on
 /// the file.
-pub fn compare_signature(file: &mut File, signature: u32) -> Result<bool, String> {
-    let current_offset = file.stream_position()
-        .or(Err("Unable to read the current position in the archive".to_string()))?;
-    let chunk = read_chunk(file, 4);
-    let value = read_u32_le(&chunk)
-        .or(Err("Unable to compare signature".to_string()))?;
+pub fn compare_signature_raw(file: &mut File, signature_1: &[u8], signature_2: u32, rewind_on_mismatch: bool) -> Result<bool, String> {
+    let value = read_u32_le(&signature_1)
+        .or(Err("Unable to compare signature"))?;
 
-    let signature_match = value == signature;
-    if !signature_match {
-        file.seek(SeekFrom::Start(current_offset))
-                    .or(Err("Unable to move cursor in the archive".to_string()))?;
+    let signature_match = value == signature_2;
+    // The bytes of the signature have already been read by the caller
+    // so if the signature doesn't match, rewind the cursor of 4 bytes.
+    if !signature_match && rewind_on_mismatch {
+        rewind_file_cursor(file, 4)?;
     }
     Ok(signature_match)
+}
+
+/// Check if a file has enough bytes remaining to read
+/// It's a helper function to detect if we're at the end of the file
+pub fn file_has_remaining_space(file: &mut File, number_of_bytes: u32) -> Result<bool, String> {
+    let current_offset = file.stream_position()
+        .or(Err("Unable to read current position in archive"))?;
+
+    let end_of_file = file.seek(SeekFrom::End(0)).or(Err("Unable to move cursor to end of archive"))?;
+
+    // Reset the cursor as its original position
+    file.seek(SeekFrom::Start(current_offset))
+        .or(Err("Unable to move cursor in archive"))?;
+
+    Ok(end_of_file - current_offset > number_of_bytes as u64)
+}
+
+/// Rewind the cursor of file of number_of_bytes bytes.
+/// Returns true if it worked, false if an error occured
+pub fn rewind_file_cursor(file: &mut File, number_of_bytes: u64) -> Result<(), String> {
+    let current_offset = file.stream_position()
+        .or(Err("Unable to read current position in archive"))?;
+
+    file.seek(SeekFrom::Start(current_offset-number_of_bytes))
+        .or(Err("Unable to move the cursor in the archive"))?;
+
+    return Ok(());
 }
 
 /// Reads a u32 from little indian bytes
